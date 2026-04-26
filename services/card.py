@@ -1,258 +1,278 @@
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from io import BytesIO
 import math
 from datetime import datetime
 
+# iPhone-style themes
 THEMES = {
-    "clear":  {"top": (255, 180, 50),  "bot": (255, 100, 30),  "text": (255, 255, 255)},
-    "clouds": {"top": (100, 120, 160), "bot": (60,  80,  120), "text": (255, 255, 255)},
-    "rain":   {"top": (60,  90,  140), "bot": (30,  50,  100), "text": (200, 220, 255)},
-    "snow":   {"top": (180, 210, 240), "bot": (120, 160, 210), "text": (255, 255, 255)},
-    "storm":  {"top": (40,  40,  80),  "bot": (20,  20,  50),  "text": (180, 200, 255)},
-    "mist":   {"top": (140, 150, 160), "bot": (90,  100, 120), "text": (240, 240, 255)},
-    "default":{"top": (60,  100, 180), "bot": (20,  50,  120), "text": (255, 255, 255)},
+    "clear_day":  {"top": (255, 200, 60),  "bot": (255, 120, 30),  "text": (255,255,255), "card": (255,160,40,80)},
+    "clear_night":{"top": (30,  40,  100), "bot": (10,  15,  60),  "text": (255,255,255), "card": (50,60,120,80)},
+    "clouds":     {"top": (120, 140, 180), "bot": (70,  90,  140), "text": (255,255,255), "card": (100,120,160,80)},
+    "rain":       {"top": (50,  90,  160), "bot": (20,  50,  110), "text": (220,235,255), "card": (60,90,150,80)},
+    "snow":       {"top": (170, 200, 240), "bot": (100, 140, 210), "text": (255,255,255), "card": (150,180,230,80)},
+    "storm":      {"top": (35,  35,  75),  "bot": (15,  15,  45),  "text": (200,215,255), "card": (50,50,100,80)},
+    "mist":       {"top": (150, 160, 175), "bot": (100, 110, 130), "text": (245,245,255), "card": (130,140,160,80)},
+    "default":    {"top": (50,  100, 200), "bot": (20,  60,  150), "text": (255,255,255), "card": (60,90,180,80)},
 }
 
-DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+MONTHS_RU = ["","Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"]
+DAYS_RU   = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"]
+DAYS_SHORT = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
 
 
-def get_theme(condition: str) -> dict:
+def get_theme(condition: str, icon: str = "01d") -> dict:
     c = condition.lower()
-    if "clear" in c:      return THEMES["clear"]
+    night = icon.endswith("n")
+    if "clear" in c:
+        return THEMES["clear_night"] if night else THEMES["clear_day"]
     if "rain" in c or "drizzle" in c: return THEMES["rain"]
     if "snow" in c:       return THEMES["snow"]
-    if "storm" in c or "thunderstorm" in c: return THEMES["storm"]
+    if "thunderstorm" in c: return THEMES["storm"]
     if "mist" in c or "fog" in c or "haze" in c: return THEMES["mist"]
     if "cloud" in c:      return THEMES["clouds"]
     return THEMES["default"]
 
 
-def gradient_bg(draw, w, h, top, bot):
+def gradient_bg(img, w, h, top, bot):
+    draw = ImageDraw.Draw(img)
     for y in range(h):
         t = y / h
-        r = int(top[0] + (bot[0] - top[0]) * t)
-        g = int(top[1] + (bot[1] - top[1]) * t)
-        b = int(top[2] + (bot[2] - top[2]) * t)
-        draw.line([(0, y), (w, y)], fill=(r, g, b))
+        r = int(top[0] + (bot[0]-top[0])*t)
+        g = int(top[1] + (bot[1]-top[1])*t)
+        b = int(top[2] + (bot[2]-top[2])*t)
+        draw.line([(0,y),(w,y)], fill=(r,g,b))
 
 
-def rounded_rect(draw, xy, radius, fill, alpha=180):
-    x1, y1, x2, y2 = xy
-    overlay = Image.new("RGBA", (x2 - x1, y2 - y1), (0, 0, 0, 0))
+def glass_rect(img, x1, y1, x2, y2, radius=20, fill_color=(255,255,255,40), border=True):
+    overlay = Image.new("RGBA", img.size, (0,0,0,0))
     d = ImageDraw.Draw(overlay)
-    d.rounded_rectangle([0, 0, x2 - x1, y2 - y1], radius=radius, fill=(*fill[:3], alpha))
-    return overlay, (x1, y1)
+    d.rounded_rectangle([x1,y1,x2,y2], radius=radius, fill=fill_color)
+    if border:
+        d.rounded_rectangle([x1,y1,x2,y2], radius=radius, outline=(255,255,255,60), width=1)
+    img = Image.alpha_composite(img, overlay)
+    return img
 
 
-def try_font(size):
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
-    except:
-        return ImageFont.load_default()
+def font_bold(size):
+    for path in [
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]:
+        try: return ImageFont.truetype(path, size)
+        except: pass
+    return ImageFont.load_default()
 
 
-def try_font_regular(size):
-    try:
-        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
-    except:
-        return ImageFont.load_default()
+def font_reg(size):
+    for path in [
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]:
+        try: return ImageFont.truetype(path, size)
+        except: pass
+    return ImageFont.load_default()
 
 
-def draw_weather_icon(img, cx, cy, code, size=44):
+def draw_icon(img, cx, cy, code, size=50):
     d = ImageDraw.Draw(img)
     c = code[:2]
     r = size // 2
+    sun  = (255, 220, 50)
+    cld  = (225, 235, 248)
+    rain = (100, 160, 220)
+    snow = (200, 225, 255)
+    bolt = (255, 230, 0)
 
-    sun_col   = (255, 220, 50)
-    cloud_col = (220, 230, 245)
-    rain_col  = (120, 170, 230)
-    snow_col  = (210, 230, 255)
-    bolt_col  = (255, 230, 0)
+    def _sun(x, y, rs, rays=8, ray_len=10):
+        for i in range(rays):
+            a = math.radians(i * 360 / rays)
+            x1 = x + int((rs+4)*math.cos(a)); y1 = y + int((rs+4)*math.sin(a))
+            x2 = x + int((rs+ray_len)*math.cos(a)); y2 = y + int((rs+ray_len)*math.sin(a))
+            d.line([(x1,y1),(x2,y2)], fill=sun, width=2)
+        d.ellipse([x-rs,y-rs,x+rs,y+rs], fill=sun)
 
-    def sun(x, y, rs, ray_len=10):
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            x1 = x + int((rs + 4) * math.cos(rad))
-            y1 = y + int((rs + 4) * math.sin(rad))
-            x2 = x + int((rs + ray_len) * math.cos(rad))
-            y2 = y + int((rs + ray_len) * math.sin(rad))
-            d.line([(x1, y1), (x2, y2)], fill=sun_col, width=2)
-        d.ellipse([x-rs, y-rs, x+rs, y+rs], fill=sun_col)
+    def _cloud(x, y, w=40, h=18):
+        d.ellipse([x-w,y-h,x+w,y+h], fill=cld)
+        d.ellipse([x-w//2-6,y-h*2+2,x+w//2,y+2], fill=cld)
+        d.ellipse([x+2,y-h*2+6,x+w-4,y+2], fill=cld)
 
-    def cloud(x, y, w=36, h=16):
-        d.ellipse([x-w, y-h, x+w, y+h], fill=cloud_col)
-        d.ellipse([x-w//2-8, y-h*2, x+w//2+4, y], fill=cloud_col)
-        d.ellipse([x+2, y-h*2+4, x+w-2, y], fill=cloud_col)
-
-    def drops(x, y, n=3, offset_x=0):
+    def _drops(x, y, n=3, dx=0):
         for i in range(n):
-            dx = x + offset_x - (n-1)*7 + i*14
-            d.ellipse([dx-3, y, dx+3, y+10], fill=rain_col)
-            d.polygon([(dx, y), (dx-3, y+6), (dx+3, y+6)], fill=rain_col)
+            px = x + dx - (n-1)*8 + i*16
+            pts = [(px,y),(px-4,y+12),(px+4,y+12)]
+            d.polygon(pts, fill=rain)
+            d.ellipse([px-4,y,px+4,y+8], fill=rain)
 
-    def snowflakes(x, y, n=3, offset_x=0):
+    def _snow(x, y, n=3, dx=0):
         for i in range(n):
-            dx = x + offset_x - (n-1)*7 + i*14
-            d.line([(dx, y+2), (dx, y+10)], fill=snow_col, width=2)
-            d.line([(dx-4, y+6), (dx+4, y+6)], fill=snow_col, width=2)
-            d.line([(dx-3, y+3), (dx+3, y+9)], fill=snow_col, width=1)
-            d.line([(dx+3, y+3), (dx-3, y+9)], fill=snow_col, width=1)
+            px = x + dx - (n-1)*8 + i*16
+            d.line([(px,y+2),(px,y+12)], fill=snow, width=2)
+            d.line([(px-5,y+7),(px+5,y+7)], fill=snow, width=2)
+            d.line([(px-4,y+3),(px+4,y+11)], fill=snow, width=1)
+            d.line([(px+4,y+3),(px-4,y+11)], fill=snow, width=1)
 
     if c == "01":
-        sun(cx, cy, r - 4)
+        _sun(cx, cy, r-4)
     elif c == "02":
-        sun(cx - r//2, cy - r//3, r//2, ray_len=6)
-        cloud(cx + r//4, cy + r//4, w=28, h=12)
-    elif c in ("03", "04"):
-        cloud(cx, cy, w=36, h=16)
+        _sun(cx-r//2, cy-r//3, r//2, rays=8, ray_len=6)
+        _cloud(cx+r//4, cy+r//4, w=r-4, h=r//2-2)
+    elif c in ("03","04"):
+        _cloud(cx, cy, w=r+4, h=r//2+2)
     elif c == "09":
-        cloud(cx, cy - 10, w=32, h=13)
-        drops(cx, cy + 12)
+        _cloud(cx, cy-12, w=r+2, h=r//2)
+        _drops(cx, cy+14)
     elif c == "10":
-        sun(cx - r//2, cy - r//2, r//2 - 2, ray_len=5)
-        cloud(cx + 4, cy - 4, w=26, h=11)
-        drops(cx + 4, cy + 14, n=2)
+        _sun(cx-r//2, cy-r//2, r//3, ray_len=5)
+        _cloud(cx+r//4, cy-r//4, w=r-2, h=r//2-2)
+        _drops(cx+r//4, cy+16, n=2)
     elif c == "11":
-        cloud(cx, cy - 12, w=32, h=13)
-        drops(cx - 8, cy + 8, n=2)
-        bolt = [(cx+6, cy+8), (cx, cy+20), (cx+5, cy+20), (cx-2, cy+34)]
-        d.line(bolt, fill=bolt_col, width=3)
+        _cloud(cx, cy-14, w=r+2, h=r//2)
+        _drops(cx-10, cy+10, n=2)
+        bolt_pts = [(cx+8,cy+8),(cx+1,cy+22),(cx+7,cy+22),(cx-2,cy+38)]
+        d.line(bolt_pts, fill=bolt, width=3)
     elif c == "13":
-        cloud(cx, cy - 10, w=32, h=13)
-        snowflakes(cx, cy + 12)
+        _cloud(cx, cy-12, w=r+2, h=r//2)
+        _snow(cx, cy+14)
     elif c == "50":
         for i in range(4):
-            dy = cy - 12 + i * 9
-            d.rounded_rectangle([cx - r + 4, dy, cx + r - 4, dy + 5], radius=2, fill=cloud_col)
+            dy = cy - 14 + i*10
+            d.rounded_rectangle([cx-r+6, dy, cx+r-6, dy+5], radius=3, fill=cld)
     else:
-        sun(cx, cy, r - 4)
+        _sun(cx, cy, r-4)
 
 
 def make_today_card(city: str, data: dict) -> BytesIO:
-    W, H = 900, 500
+    W, H = 900, 480
     img = Image.new("RGBA", (W, H))
-    draw = ImageDraw.Draw(img)
 
     condition = data["weather"][0]["main"]
+    icon_code = data["weather"][0]["icon"]
     desc = data["weather"][0]["description"].capitalize()
-    theme = get_theme(condition)
+    theme = get_theme(condition, icon_code)
 
-    gradient_bg(draw, W, H, theme["top"], theme["bot"])
+    gradient_bg(img, W, H, theme["top"], theme["bot"])
 
-    # Декоративные круги
-    for cx, cy, r, a in [(750, 80, 180, 20), (100, 400, 120, 15)]:
-        circle = Image.new("RGBA", (r*2, r*2), (0,0,0,0))
-        cd = ImageDraw.Draw(circle)
-        cd.ellipse([0,0,r*2,r*2], fill=(255,255,255,a))
-        img.paste(circle, (cx-r, cy-r), circle)
+    # Большой декоративный круг
+    circle = Image.new("RGBA", (W, H), (0,0,0,0))
+    cd = ImageDraw.Draw(circle)
+    cd.ellipse([W-350, -150, W+150, 350], fill=(255,255,255,18))
+    cd.ellipse([-100, H-200, 250, H+100], fill=(255,255,255,12))
+    img = Image.alpha_composite(img, circle)
 
+    draw = ImageDraw.Draw(img)
     tc = theme["text"]
 
-    # Город
-    f_city = try_font(52)
-    draw.text((60, 50), city, font=f_city, fill=tc)
+    # Название города
+    draw.text((60, 48), city, font=font_bold(54), fill=tc)
 
     # Дата
-    f_date = try_font_regular(26)
     now = datetime.now()
-    days_ru = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота","Воскресенье"]
-    months_ru = ["","Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"]
-    date_str = f"{days_ru[now.weekday()]}, {now.day} {months_ru[now.month]} {now.year}"
-    draw.text((62, 115), date_str, font=f_date, fill=(*tc[:3], 200))
+    date_str = f"{DAYS_RU[now.weekday()]}, {now.day} {MONTHS_RU[now.month]} {now.year}"
+    draw.text((62, 112), date_str, font=font_reg(26), fill=(*tc[:3], 190))
 
-    # Иконка погоды большая
-    icon_code = data["weather"][0]["icon"]
-    draw_weather_icon(img, 430, 260, icon_code, size=90)
-
-    # Температура
+    # Большая температура
     temp = round(data["main"]["temp"])
-    f_temp = try_font(160)
-    draw.text((60, 150), f"{temp}°", font=f_temp, fill=tc)
+    draw.text((60, 155), f"{temp}°", font=font_bold(170), fill=tc)
 
     # Описание
-    f_desc = try_font(34)
-    draw.text((62, 330), desc, font=f_desc, fill=(*tc[:3], 220))
+    draw.text((64, 348), desc, font=font_bold(32), fill=(*tc[:3], 220))
 
-    # Блок деталей
+    # Большая иконка
+    draw_icon(img, 680, 210, icon_code, size=110)
+
+    # Детали — glassmorphism карточки
     details = [
-        ("Влажность", f"{data['main']['humidity']}%"),
-        ("Ветер",     f"{round(data['wind']['speed'])} м/с"),
-        ("Ощущается", f"{round(data['main']['feels_like'])}°C"),
-        ("Видимость",  f"{data.get('visibility', 0) // 1000} км"),
+        ("Влажность",  f"{data['main']['humidity']}%"),
+        ("Ветер",      f"{round(data['wind']['speed'])} м/с"),
+        ("Ощущается",  f"{round(data['main']['feels_like'])}°"),
+        ("Видимость",  f"{data.get('visibility',0)//1000} км"),
     ]
-
-    box_w, box_h = 185, 80
-    start_x = 510
+    bw, bh, gap = 190, 82, 14
+    sx = 60
+    by_start = 390
     for i, (label, val) in enumerate(details):
-        bx = start_x + (i % 2) * (box_w + 16)
-        by = 170 + (i // 2) * (box_h + 16)
-        overlay, pos = rounded_rect(draw, (bx, by, bx+box_w, by+box_h), 16, (0,0,0), 60)
-        img.paste(overlay, pos, overlay)
-        fl = try_font_regular(18)
-        fv = try_font(26)
-        draw.text((bx+14, by+10), label, font=fl, fill=(*tc[:3], 180))
-        draw.text((bx+14, by+36), val, font=fv, fill=tc)
+        bx = sx + i*(bw+gap)
+        img = glass_rect(img, bx, by_start, bx+bw, by_start+bh, radius=18,
+                         fill_color=(255,255,255,35))
+        draw = ImageDraw.Draw(img)
+        draw.text((bx+14, by_start+10), label, font=font_reg(17), fill=(*tc[:3],170))
+        draw.text((bx+14, by_start+34), val,   font=font_bold(26), fill=tc)
 
     buf = BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=95)
+    img.convert("RGB").save(buf, "JPEG", quality=95)
     buf.seek(0)
     return buf
 
 
 def make_week_card(city: str, days: list) -> BytesIO:
-    W, H = 900, 560
+    W, H = 920, 580
     img = Image.new("RGBA", (W, H))
-    draw = ImageDraw.Draw(img)
 
     condition = days[0]["condition"]
-    theme = get_theme(condition)
-    gradient_bg(draw, W, H, theme["top"], theme["bot"])
+    icon_code = days[0]["icon"]
+    theme = get_theme(condition, icon_code)
+    gradient_bg(img, W, H, theme["top"], theme["bot"])
 
+    # Декор
+    circle = Image.new("RGBA", (W,H), (0,0,0,0))
+    cd = ImageDraw.Draw(circle)
+    cd.ellipse([W-300,-100,W+200,400], fill=(255,255,255,15))
+    img = Image.alpha_composite(img, circle)
+
+    draw = ImageDraw.Draw(img)
     tc = theme["text"]
 
-    f_title = try_font(48)
-    draw.text((60, 40), f"Прогноз  {city}", font=f_title, fill=tc)
+    draw.text((50, 36), f"Прогноз  {city}", font=font_bold(46), fill=tc)
+    draw.text((52, 94), "На 7 дней", font=font_reg(24), fill=(*tc[:3],180))
 
-    f_sub = try_font_regular(24)
-    draw.text((62, 100), "На 7 дней", font=f_sub, fill=(*tc[:3], 180))
-
-    card_w = 108
-    gap = 14
-    start_x = 40
-    start_y = 155
+    n = len(days[:7])
+    total_gap = 12
+    card_w = (W - 50*2 - total_gap*(n-1)) // n
+    card_h = 390
+    sy = 138
 
     for i, day in enumerate(days[:7]):
-        x = start_x + i * (card_w + gap)
-        y = start_y
-        ch = 340
+        x = 50 + i*(card_w+total_gap)
+        img = glass_rect(img, x, sy, x+card_w, sy+card_h, radius=22,
+                         fill_color=(255,255,255,38))
+        draw = ImageDraw.Draw(img)
 
-        overlay, pos = rounded_rect(draw, (x, y, x+card_w, y+ch), 20, (0,0,0), 70)
-        img.paste(overlay, pos, overlay)
+        # День
+        draw.text((x+card_w//2, sy+14), day["day"],
+                  font=font_bold(19), fill=tc, anchor="mt")
+        # Дата
+        draw.text((x+card_w//2, sy+40), day["date"],
+                  font=font_reg(15), fill=(*tc[:3],175), anchor="mt")
 
-        f_day = try_font(20)
-        draw.text((x + card_w//2, y+14), day["day"], font=f_day, fill=tc, anchor="mt")
+        # Иконка
+        draw_icon(img, x+card_w//2, sy+108, day["icon"], size=46)
+        draw = ImageDraw.Draw(img)
 
-        f_date2 = try_font_regular(16)
-        draw.text((x + card_w//2, y+42), day["date"], font=f_date2, fill=(*tc[:3], 180), anchor="mt")
+        # Макс
+        draw.text((x+card_w//2, sy+158), f"{day['max']}°",
+                  font=font_bold(36), fill=tc, anchor="mt")
+        # Мин
+        draw.text((x+card_w//2, sy+200), f"{day['min']}°",
+                  font=font_reg(24), fill=(*tc[:3],155), anchor="mt")
 
-        # Иконка нарисованная
-        draw_weather_icon(img, x + card_w//2, y + 100, day["icon"], size=44)
+        # Разделитель
+        draw.line([(x+12, sy+240), (x+card_w-12, sy+240)],
+                  fill=(*tc[:3],40), width=1)
 
-        f_max = try_font(36)
-        draw.text((x + card_w//2, y+148), f"{day['max']}°", font=f_max, fill=tc, anchor="mt")
+        # Детали
+        draw.text((x+card_w//2, sy+254), f"Влажн. {day['humidity']}%",
+                  font=font_reg(15), fill=(*tc[:3],195), anchor="mt")
+        draw.text((x+card_w//2, sy+278), f"Ветер {day['wind']} м/с",
+                  font=font_reg(15), fill=(*tc[:3],195), anchor="mt")
 
-        f_min = try_font_regular(26)
-        draw.text((x + card_w//2, y+192), f"{day['min']}°", font=f_min, fill=(*tc[:3], 160), anchor="mt")
-
-        f_hum = try_font_regular(16)
-        draw.text((x + card_w//2, y+240), f"{day['humidity']}%", font=f_hum, fill=(*tc[:3], 200), anchor="mt")
-        draw.text((x + card_w//2, y+262), f"{day['wind']}m/s", font=f_hum, fill=(*tc[:3], 200), anchor="mt")
-
-        f_desc2 = try_font_regular(13)
-        desc_short = day["desc"][:9]
-        draw.text((x + card_w//2, y+292), desc_short, font=f_desc2, fill=(*tc[:3], 160), anchor="mt")
+        # Описание
+        desc = day["desc"][:11]
+        draw.text((x+card_w//2, sy+316), desc,
+                  font=font_reg(13), fill=(*tc[:3],155), anchor="mt")
 
     buf = BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=95)
+    img.convert("RGB").save(buf, "JPEG", quality=95)
     buf.seek(0)
     return buf
