@@ -53,8 +53,15 @@ def glass_rect(img, x1, y1, x2, y2, radius=20, fill_color=(255,255,255,40), bord
     return img
 
 
+import os
+_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_FONT_BOLD = os.path.join(_BASE, "font_bold.ttf")
+_FONT_REG  = os.path.join(_BASE, "font_regular.ttf")
+
+
 def font_bold(size):
     for path in [
+        _FONT_BOLD,
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -66,6 +73,7 @@ def font_bold(size):
 
 def font_reg(size):
     for path in [
+        _FONT_REG,
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
